@@ -76,3 +76,4 @@ Sherpas.dateISO = function (d) {
 Sherpas.dateES = function (iso) {
   var a = String(iso).split('-'); return a[2] + '/' + a[1] + '/' + a[0];
 };
+// sync test local->web (no code change)
