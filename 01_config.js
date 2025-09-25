@@ -1,3 +1,5 @@
+// sync test web->local (no code change)
+
 /** 01_config.gs — Configuración base y espacio de nombres
  *  Paradigma: OOP con un único namespace global `Sherpas`.
  *  Todos los demás archivos añaden clases u objetos bajo `Sherpas.*`.
