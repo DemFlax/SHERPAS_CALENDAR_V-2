@@ -1,1 +1,8 @@
+<<<<<<< HEAD
 node_modules/\n.DS_Store\nThumbs.db\n
+=======
+﻿node_modules/
+.DS_Store
+Thumbs.db
+*.zip
+>>>>>>> b5c69ff4226c26e1804ecfb3d82f81a3f7c5e171
