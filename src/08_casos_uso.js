@@ -52,11 +52,13 @@ Sherpas.UseCases = (function(){
     }
     ss.toast(message);
     
-    // Debug info
-    if(typeof Sherpas.TriggerSvc.countActiveTriggers === 'function') {
-      setTimeout(function() {
+    // CORRECCIÓN: Ejecutar debug triggers directamente (sin setTimeout)
+    if(typeof Sherpas.TriggerSvc !== 'undefined' && typeof Sherpas.TriggerSvc.countActiveTriggers === 'function') {
+      try {
         Sherpas.TriggerSvc.countActiveTriggers();
-      }, 1000);
+      } catch(e) {
+        console.warn('Error ejecutando debug triggers:', e);
+      }
     }
   }
 
@@ -91,6 +93,25 @@ Sherpas.UseCases = (function(){
       }
     } catch(e) {
       console.warn('Error configurando triggers para nueva guía:', e);
+    }
+    
+    // *** NUEVO: Enviar email de bienvenida con template profesional ***
+    if(email && typeof Sherpas.EmailTemplates !== 'undefined') {
+      try {
+        var emailSent = Sherpas.EmailTemplates.sendWelcome(nombre, codigo, email, file.getUrl());
+        if(emailSent) {
+          console.log('Email de bienvenida enviado correctamente a:', email);
+        } else {
+          console.warn('Error enviando email de bienvenida a:', email);
+          // Intentar notificar al usuario del problema
+          SpreadsheetApp.getActive().toast('ADVERTENCIA: El calendario se creó correctamente, pero no se pudo enviar el email de bienvenida. Verifica la quota de Gmail.', 'Email no enviado', 10);
+        }
+      } catch(e) {
+        console.error('Error crítico enviando email de bienvenida:', e);
+        SpreadsheetApp.getActive().toast('ADVERTENCIA: Calendario creado, pero falló el envío de email. Error: ' + e.message, 'Error de Email', 10);
+      }
+    } else {
+      console.warn('EmailTemplates no disponible o email vacío');
     }
     
     return file;
@@ -169,24 +190,168 @@ Sherpas.UseCases = (function(){
     return true;
   }
 
-  /** Repara TODAS las guías: recorta filas, re-aplica DV/CF y re-protege */
-  function RepairGuidesUC(){
-    Sherpas.RegistryRepo.list().forEach(function(r){
+  /** NUEVA: Reparación completa de TODAS las guías con problemas de protección */
+  function ForceRepairAllGuidesUC(){
+    var guias = Sherpas.RegistryRepo.list();
+    var totalRepaired = 0;
+    var totalErrors = 0;
+    var repairLog = [];
+
+    console.log('Iniciando reparación forzada de', guias.length, 'guías...');
+
+    guias.forEach(function(guia) {
       try {
-        var ss = SpreadsheetApp.openById(r.fileId);
-        ss.getSheets().forEach(function(sh){
-          if(Sherpas.CFG.GUIDE_MONTH_NAME.test(sh.getName())){
-            Sherpas.GuideBook.normalize(sh);
-            Sherpas.GuideBook.applyDV(sh);
-            Sherpas.GuideBook.applyCF(sh);
-            Sherpas.GuideBook.protectEditableMT(sh);
+        console.log('Reparando guía:', guia.codigo, '-', guia.nombre);
+        
+        var ss = SpreadsheetApp.openById(guia.fileId);
+        var sheetsRepaired = 0;
+        var sheetsWithErrors = 0;
+
+        ss.getSheets().forEach(function(sheet) {
+          if(Sherpas.CFG.GUIDE_MONTH_NAME.test(sheet.getName())) {
+            try {
+              // Reparación completa paso a paso
+              console.log('  Reparando hoja:', sheet.getName());
+
+              // 1. Normalizar estructura
+              Sherpas.GuideBook.normalize(sheet);
+
+              // 2. Limpiar contenido inválido
+              _cleanInvalidContent(sheet);
+
+              // 3. Aplicar protecciones completas 
+              var p = Sherpas.Util.parseTab_MMYYYY(sheet.getName());
+              if(p) {
+                var meta = Sherpas.Util.monthMeta(p.yyyy, p.mm);
+                var mtA1 = Sherpas.Util.monthMT_A1_FromMeta(meta, 2);
+                
+                // Usar función de protección forzada
+                if(typeof Sherpas.GuideBook.forceRepairGuide === 'function') {
+                  Sherpas.GuideBook.applyDV(sheet);
+                  Sherpas.GuideBook.applyCF(sheet);
+                  Sherpas.GuideBook.protectEditableMT(sheet);
+                } else {
+                  // Fallback a métodos individuales
+                  Sherpas.GuideBook.applyDV(sheet);
+                  Sherpas.GuideBook.applyCF(sheet);
+                  Sherpas.GuideBook.protectEditableMT(sheet);
+                }
+              }
+
+              sheetsRepaired++;
+              console.log('    ✅ Reparado:', sheet.getName());
+
+            } catch(sheetError) {
+              sheetsWithErrors++;
+              console.error('    ❌ Error en hoja', sheet.getName(), ':', sheetError);
+              repairLog.push({
+                guia: guia.codigo,
+                sheet: sheet.getName(),
+                error: sheetError.message
+              });
+            }
           }
         });
-      } catch(e) {
-        console.error('Error reparando guía ' + r.codigo + ':', e);
+
+        // Reinstalar triggers
+        try {
+          Sherpas.TriggerSvc.ensureOnEditForSpreadsheet(guia.fileId, 'Sherpas.Triggers.onEditGuide');
+          console.log('  ✅ Triggers reinstalados para:', guia.codigo);
+        } catch(triggerError) {
+          console.warn('  ⚠️ Error reinstalando triggers:', triggerError);
+        }
+
+        totalRepaired += sheetsRepaired;
+        totalErrors += sheetsWithErrors;
+
+        repairLog.push({
+          guia: guia.codigo,
+          sheetsRepaired: sheetsRepaired,
+          sheetsWithErrors: sheetsWithErrors,
+          status: sheetsWithErrors === 0 ? 'COMPLETADO' : 'CON_ERRORES'
+        });
+
+      } catch(guideError) {
+        totalErrors++;
+        console.error('❌ Error completo en guía', guia.codigo, ':', guideError);
+        repairLog.push({
+          guia: guia.codigo,
+          error: guideError.message,
+          status: 'FALLIDO'
+        });
       }
     });
-    return true;
+
+    // Mostrar resumen
+    console.log('=== RESUMEN REPARACIÓN COMPLETA ===');
+    console.log('Guías procesadas:', guias.length);
+    console.log('Hojas reparadas:', totalRepaired);
+    console.log('Errores encontrados:', totalErrors);
+    console.log('Log completo:', repairLog);
+
+    // Mensaje al usuario
+    var message = '🔧 Reparación Completa Finalizada\n\n';
+    message += '📊 Resultados:\n';
+    message += '• Guías procesadas: ' + guias.length + '\n';
+    message += '• Hojas reparadas: ' + totalRepaired + '\n';
+    message += '• Errores: ' + totalErrors + '\n\n';
+    
+    if(totalErrors === 0) {
+      message += '✅ Todos los calendarios reparados exitosamente';
+    } else {
+      message += '⚠️ Revisa la consola para detalles de errores';
+    }
+
+    SpreadsheetApp.getActive().toast(message, 'Reparación Completa', 15);
+
+    return {
+      guidesProcessed: guias.length,
+      sheetsRepaired: totalRepaired,
+      errors: totalErrors,
+      log: repairLog
+    };
+  }
+
+  /**
+   * NUEVA: Limpia contenido inválido de una hoja de guía
+   */
+  function _cleanInvalidContent(sheet) {
+    try {
+      var p = Sherpas.Util.parseTab_MMYYYY(sheet.getName());
+      if(!p) return;
+
+      var meta = Sherpas.Util.monthMeta(p.yyyy, p.mm);
+      var mtA1List = Sherpas.Util.monthMT_A1_FromMeta(meta, 2);
+      var cleaned = 0;
+
+      mtA1List.forEach(function(a1) {
+        var range = sheet.getRange(a1);
+        var value = String(range.getDisplayValue() || '').toUpperCase().trim();
+        
+        // Si el valor no es válido, corregirlo
+        if(value && !Sherpas.CFG.GUIDE_DV.includes(value) && !value.startsWith('ASIGNADO')) {
+          var pos = Sherpas.Util.a1ToRowCol(a1);
+          var rowType = (pos.row - 2) % 3;
+          var correctValue = (rowType === 1) ? 'MAÑANA' : 'TARDE';
+          
+          range.setValue(correctValue);
+          cleaned++;
+          console.log('    Limpiado valor inválido en', a1, ':', value, '→', correctValue);
+        }
+      });
+
+      if(cleaned > 0) {
+        console.log('    ✅ Limpiados', cleaned, 'valores inválidos en', sheet.getName());
+      }
+
+    } catch(e) {
+      console.error('Error limpiando contenido inválido:', e);
+    }
+  }
+
+  /** Repara TODAS las guías: recorta filas, re-aplica DV/CF y re-protege */
+  function RepairGuidesUC(){
+    return ForceRepairAllGuidesUC(); // Usar la nueva función mejorada
   }
 
   function CronReconcileUC(){
@@ -204,6 +369,35 @@ Sherpas.UseCases = (function(){
     }catch(e){ console.error('CronReconcileUC', e); }
   }
 
+  /** NUEVA: Función para probar el sistema de emails */
+  function TestEmailUC(){
+    try {
+      var testEmail = Session.getActiveUser().getEmail();
+      if(!testEmail) {
+        throw new Error('No se pudo obtener el email del usuario activo');
+      }
+      
+      var success = Sherpas.EmailTemplates.sendWelcome(
+        'Test Usuario', 
+        'G99', 
+        testEmail, 
+        'https://docs.google.com/spreadsheets/d/test'
+      );
+      
+      if(success) {
+        SpreadsheetApp.getActive().toast('Email de prueba enviado correctamente a: ' + testEmail, 'Test Email', 5);
+        return true;
+      } else {
+        SpreadsheetApp.getActive().toast('Error enviando email de prueba. Verifica la quota de Gmail.', 'Error Email', 10);
+        return false;
+      }
+    } catch(e) {
+      console.error('Error en TestEmailUC:', e);
+      SpreadsheetApp.getActive().toast('Error en test de email: ' + e.message, 'Error', 10);
+      return false;
+    }
+  }
+
   return {
     InitUC: InitUC,
     CreateGuideUC: CreateGuideUC,
@@ -211,6 +405,8 @@ Sherpas.UseCases = (function(){
     DeleteGuideTotalUC: DeleteGuideTotalUC,
     SyncNowUC: SyncNowUC,
     RepairGuidesUC: RepairGuidesUC,
-    CronReconcileUC: CronReconcileUC
+    ForceRepairAllGuidesUC: ForceRepairAllGuidesUC,
+    CronReconcileUC: CronReconcileUC,
+    TestEmailUC: TestEmailUC
   };
 })();

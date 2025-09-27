@@ -21,10 +21,26 @@ Sherpas.Util = (function () {
 
   /* -------- A1 helpers -------- */
   function colToA1(col){ var s=''; while(col){ var n=(col-1)%26; s=String.fromCharCode(65+n)+s; col=(col-n-1)/26|0; } return s; }
+  
+  /**
+   * CORREGIDO: Convierte notación A1 a fila/columna numéricas
+   * @param {string} a1 - Notación A1 (ej: "B3", "AB15")
+   * @returns {{row:number, col:number}} - Fila y columna (1-based)
+   */
   function a1ToRowCol(a1){
-    var m=String(a1).toUpperCase().match(/^([A-Z]+)(\d+)$/); if(!m) return {row:0,col:0};
-    var col=0, letters=m[1]; for(var i=0;i<letters.length;i++){ col = col*26 + (letters.charCodeAt(i)-64); }
-    return {row:parseInt(m[2],10), col:col};
+    var m = String(a1).toUpperCase().match(/^([A-Z]+)(\d+)$/); 
+    if(!m) return {row:0, col:0};
+    
+    var letters = m[1];
+    var row = parseInt(m[2], 10);
+    var col = 0;
+    
+    // Convertir letras de columna a número
+    for(var i = 0; i < letters.length; i++){
+      col = col * 26 + (letters.charCodeAt(i) - 64);
+    }
+    
+    return {row: row, col: col};
   }
 
   /* -------- Mes y cuadrícula (Lun=0..Dom=6) -------- */
@@ -123,6 +139,56 @@ Sherpas.Util = (function () {
     return { mm:parseInt(m[1],10), yyyy:parseInt(m[2],10) };
   }
 
+  /**
+   * NUEVA: Función para formatear fecha en español
+   * @param {string} isoDate - Fecha en formato ISO (YYYY-MM-DD)
+   * @returns {string} Fecha formateada en español
+   */
+  function dateES(iso) {
+    try {
+      var parts = String(iso).split('-');
+      if(parts.length !== 3) return iso;
+      
+      var year = parts[0];
+      var month = parts[1];
+      var day = parts[2];
+      
+      var monthNames = [
+        'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+        'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+      ];
+      
+      var monthName = monthNames[parseInt(month, 10) - 1] || month;
+      
+      return parseInt(day, 10) + ' de ' + monthName + ' de ' + year;
+    } catch(e) {
+      return iso; // Fallback al valor original
+    }
+  }
+
+  /**
+   * NUEVA: Valida si un valor es permitido para calendarios de guía
+   * @param {string} value - Valor a validar
+   * @returns {boolean} True si es válido
+   */
+  function isValidGuideValue(value) {
+    var normalizedValue = String(value || '').toUpperCase().trim();
+    return Sherpas.CFG.GUIDE_DV.includes(normalizedValue) || 
+           normalizedValue.startsWith('ASIGNADO') ||
+           normalizedValue === '';
+  }
+
+  /**
+   * NUEVA: Calcula el valor correcto para una celda M/T basado en su posición
+   * @param {string} a1 - Notación A1 de la celda
+   * @returns {string} Valor correcto ('MAÑANA' o 'TARDE')
+   */
+  function getCorrectValueForMTCell(a1) {
+    var pos = a1ToRowCol(a1);
+    var rowType = (pos.row - 2) % 3; // 1=MAÑANA, 2=TARDE
+    return (rowType === 1) ? 'MAÑANA' : 'TARDE';
+  }
+
   return {
     pad2: pad2,
     toISO: toISO,
@@ -135,6 +201,9 @@ Sherpas.Util = (function () {
     monthMeta: monthMeta,
     buildGuideMonthArrays: buildGuideMonthArrays,
     monthMT_A1_FromMeta: monthMT_A1_FromMeta,
-    parseTab_MMYYYY: parseTab_MMYYYY
+    parseTab_MMYYYY: parseTab_MMYYYY,
+    dateES: dateES,
+    isValidGuideValue: isValidGuideValue,
+    getCorrectValueForMTCell: getCorrectValueForMTCell
   };
 })();

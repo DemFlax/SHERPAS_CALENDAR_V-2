@@ -40,10 +40,11 @@ Sherpas.Triggers = (function(){
       if(accion==='LIBERAR'){
         var slot = isM? 'M' : (current.indexOf('ASIGNADO')===0? current.split(/\s+/).pop() : 'T1');
         celda.setValue('');
-        Sherpas.GuideBook.writeCell(reg.fileId, sh.getName(), fechaISO, isM?'MAÑANA':'TARDE', isM?'MAÑANA':'TARDE', true);
+        Sherpas.GuideBook.writeCell(reg.fileId, sh.getName(), fechaISO, isM?'MAÑANA':'TARDE', isM?'MAÑANA':'TARDE', false);
         Sherpas.CalendarSvc.remove(fechaISO, slot, reg.email);
-        Sherpas.MailSvc.send(reg.email, 'Liberación: '+Sherpas.Util.dateES(fechaISO)+' '+code+' '+(isM?'M':'T'),
-          '<p>Se liberó tu turno del '+Sherpas.Util.dateES(fechaISO)+' ('+(isM?'Mañana':'Tarde')+').</p><p><a href="'+reg.url+'">Abrir calendario</a></p>');
+        if(typeof Sherpas.EmailTemplates !== 'undefined') {
+          Sherpas.EmailTemplates.sendRelease(reg.nombre, reg.codigo, reg.email, fechaISO, isM?'MAÑANA':'TARDE', reg.url);
+        }
         return;
       }
 
@@ -53,8 +54,9 @@ Sherpas.Triggers = (function(){
         Sherpas.GuideBook.writeCell(reg.fileId, sh.getName(), fechaISO, isM?'MAÑANA':'TARDE', asignado, true);
         var slot2 = isM? 'M' : asignado.split(' ').pop();
         Sherpas.CalendarSvc.invite(fechaISO, slot2, reg.email);
-        Sherpas.MailSvc.send(reg.email, 'Asignación: '+Sherpas.Util.dateES(fechaISO)+' '+code+' '+slot2,
-          '<p>Tienes una asignación el '+Sherpas.Util.dateES(fechaISO)+' ('+slot2+').</p><p><a href="'+reg.url+'">Abrir calendario</a></p>');
+        if(typeof Sherpas.EmailTemplates !== 'undefined') {
+          Sherpas.EmailTemplates.sendAssignment(reg.nombre, reg.codigo, reg.email, fechaISO, slot2, reg.url);
+        }
         return;
       }
     }catch(err){ console.error('onEdit MASTER:', err); }
@@ -66,65 +68,135 @@ Sherpas.Triggers = (function(){
       var sh = range.getSheet(); var ss = sh.getParent();
       if(!Sherpas.CFG.GUIDE_MONTH_NAME.test(sh.getName())) return;
 
-      // Si hay filas extra por debajo, recorta y salir
-      var p = Sherpas.Util.parseTab_MMYYYY(sh.getName()); if(!p) return;
-      var rowsNeed = (1 + Sherpas.Util.monthMeta(p.yyyy,p.mm).weeks*3) + 1; // +1 tampón
-      if(sh.getMaxRows() > rowsNeed){
-        Sherpas.GuideBook.normalize(sh);
-        ss.toast('Se normalizó el mes (filas extra eliminadas).');
+      var r = range.getRow(), c = range.getColumn();
+      var newVal = (e.value == null ? '' : String(e.value).trim().toUpperCase());
+      var oldVal = (e.oldValue == null ? '' : String(e.oldValue).trim().toUpperCase());
+
+      console.log('onEditGuide:', sh.getName(), 'R' + r + 'C' + c, 'Valor:', newVal);
+
+      // VALIDACIÓN CRÍTICA: Solo valores permitidos
+      if(newVal && !Sherpas.CFG.GUIDE_DV.includes(newVal)) {
+        console.warn('Valor inválido detectado:', newVal, 'revertiendo a:', oldVal);
+        range.setValue(oldVal || '');
+        ss.toast('❌ Valor no permitido: "' + newVal + '"\n\nUse solo: ' + Sherpas.CFG.GUIDE_DV.join(', '), 'Valor Incorrecto', 10);
         return;
       }
 
-      var r = range.getRow(), c = range.getColumn();
-      var off = (r - 2) % 3; if(off!==1 && off!==2) return; // 1=MAÑANA 2=TARDE
-      var turno = (off===1)? 'MAÑANA':'TARDE';
-
-      var newVal = (e.value==null? '' : String(e.value).trim().toUpperCase());
-      var oldVal = (e.oldValue==null? sh.getRange(r,c).getDisplayValue() : String(e.oldValue).trim().toUpperCase());
-
-      var num = parseInt(sh.getRange(r-off, c).getDisplayValue(),10); if(!num) return;
-      var yyyy=p.yyyy, mm=p.mm;
-      var fecha = new Date(yyyy, mm-1, num);
-
-      if(newVal==='NO DISPONIBLE' || newVal==='REVERTIR' || newVal===''){
-        var slotRef = (turno==='MAÑANA')? 'M' : 'T1';
-        var start = Sherpas.CalendarSvc._shiftStart(Sherpas.Util.toISO(fecha), slotRef);
-        var diffH = (start.getTime() - (new Date()).getTime())/3600000;
-        if(diffH < Sherpas.CFG.LIMIT_HOURS){ range.setValue(oldVal); ss.toast('Fuera de ventana (14h).'); return; }
+      // Verificar si es fila M/T válida
+      var p = Sherpas.Util.parseTab_MMYYYY(sh.getName()); if(!p) return;
+      var off = (r - 2) % 3; if(off !== 1 && off !== 2) {
+        console.warn('Editando fila no válida:', r, 'offset:', off);
+        range.setValue(oldVal || '');
+        ss.toast('❌ Solo puedes editar las celdas de MAÑANA y TARDE', 'Celda No Editable', 5);
+        return;
       }
 
-      var master = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty(Sherpas.KEYS.MASTER_ID));
-      var ms = master.getSheetByName(sh.getName()); if(!ms){ ss.toast('MASTER sin pestaña '+sh.getName()); return; }
-      var header = ss.getName();
-      var mTitle = String(header||'').match(/-(G\d{2})$/i);
-      var codigo = mTitle? mTitle[1].toUpperCase() : 'G00';
+      var turno = (off === 1) ? 'MAÑANA' : 'TARDE';
+      var num = parseInt(sh.getRange(r - off, c).getDisplayValue(), 10); 
+      if(!num) {
+        console.warn('No hay número de día en la celda superior');
+        return;
+      }
 
-      var cols = (function _findGuideBlockCols(sheet, codigo){
-        var lastCol = sheet.getLastColumn();
-        var top = sheet.getRange(1,1,1,lastCol).getDisplayValues()[0].map(function(s){ return String(s||'').toUpperCase(); });
-        var row2= sheet.getRange(2,1,1,lastCol).getDisplayValues()[0].map(function(s){ return String(s||'').toUpperCase(); });
-        var codeUp = codigo.toUpperCase();
-        for(var c2=1;c2<=lastCol;c2++){
-          var t = top[c2-1];
-          if(t.startsWith(codeUp+' ') || t.startsWith(codeUp+'—') || t===codeUp){
-            var isM=(row2[c2-1]==='MAÑANA'||row2[c2-1]==='M'), isT=(row2[c2]==='TARDE'||row2[c2]==='T');
-            if(isM && isT) return {colM:c2, colT:c2+1};
-          }
+      var yyyy = p.yyyy, mm = p.mm;
+      var fecha = new Date(yyyy, mm - 1, num);
+
+      // VALIDACIÓN TEMPORAL: 14h antes del turno
+      if(newVal === 'NO DISPONIBLE' || newVal === 'REVERTIR' || newVal === ''){
+        var slotRef = (turno === 'MAÑANA') ? 'M' : 'T1';
+        var start = Sherpas.CalendarSvc._shiftStart(Sherpas.Util.toISO(fecha), slotRef);
+        var diffH = (start.getTime() - (new Date()).getTime()) / 3600000;
+        if(diffH < Sherpas.CFG.LIMIT_HOURS){ 
+          range.setValue(oldVal || turno); 
+          ss.toast('❌ No se puede cambiar disponibilidad.\n\nFaltan menos de ' + Sherpas.CFG.LIMIT_HOURS + 'h para el turno.', 'Fuera de Tiempo', 10); 
+          return; 
         }
-        return {colM:0,colT:0};
-      })(ms, codigo);
+      }
 
-      var rowMaster = Sherpas.MasterBook.findRowByISO(ms, Sherpas.Util.toISO(fecha));
-      if(!cols.colM || !cols.colT || rowMaster<3){ ss.toast('MASTER preparándose...'); return; }
+      // SINCRONIZACIÓN CON MASTER
+      try {
+        var masterId = PropertiesService.getScriptProperties().getProperty(Sherpas.KEYS.MASTER_ID);
+        if(!masterId) {
+          console.warn('No se encontró MASTER_ID');
+          return;
+        }
 
-      var targetCol = (turno==='MAÑANA')? cols.colM : cols.colT;
-      var cell = ms.getRange(rowMaster, targetCol);
-      var currentMaster = String(cell.getDisplayValue()||'').toUpperCase();
+        var master = SpreadsheetApp.openById(masterId);
+        var ms = master.getSheetByName(sh.getName()); 
+        if(!ms){ 
+          console.warn('MASTER sin pestaña', sh.getName());
+          ss.toast('⚠️ MASTER preparándose... Intenta de nuevo en unos segundos.', 'Sincronizando', 5); 
+          return; 
+        }
 
-      if(currentMaster.indexOf('ASIGNADO')===0){ range.setValue(turno); ss.toast('Turno asignado por MASTER.'); return; }
-      if(newVal==='NO DISPONIBLE'){ cell.setValue('NO DISPONIBLE'); return; }
-      if(newVal==='REVERTIR' || newVal===''){ range.setValue(turno); cell.setValue(''); return; }
-    }catch(err){ console.error('onEdit GUIDE:', err); }
+        // Obtener código de guía del título del spreadsheet
+        var header = ss.getName();
+        var mTitle = String(header || '').match(/-(G\d{2})$/i);
+        var codigo = mTitle ? mTitle[1].toUpperCase() : 'G00';
+
+        // Encontrar columnas del guía en MASTER
+        var cols = _findGuideBlockCols(ms, codigo);
+        var rowMaster = Sherpas.MasterBook.findRowByISO(ms, Sherpas.Util.toISO(fecha));
+        
+        if(!cols.colM || !cols.colT || rowMaster < 3){ 
+          console.warn('No se encontraron columnas o fila en MASTER para', codigo);
+          ss.toast('⚠️ MASTER preparándose... Columnas de guía no encontradas.', 'Configurando', 5); 
+          return; 
+        }
+
+        var targetCol = (turno === 'MAÑANA') ? cols.colM : cols.colT;
+        var cell = ms.getRange(rowMaster, targetCol);
+        var currentMaster = String(cell.getDisplayValue() || '').toUpperCase();
+
+        // JERARQUÍA: ASIGNADO por MASTER no se puede cambiar
+        if(currentMaster.indexOf('ASIGNADO') === 0){ 
+          range.setValue(currentMaster); 
+          ss.toast('❌ Turno asignado por el manager.\n\nNo puedes modificar turnos ya asignados.', 'Turno Bloqueado', 10); 
+          return; 
+        }
+
+        // SINCRONIZAR CON MASTER
+        if(newVal === 'NO DISPONIBLE'){ 
+          cell.setValue('NO DISPONIBLE'); 
+          console.log('Sincronizado NO DISPONIBLE al MASTER');
+        } else if(newVal === 'REVERTIR' || newVal === '' || newVal === turno){ 
+          range.setValue(turno); 
+          cell.setValue(''); 
+          console.log('Sincronizado liberación al MASTER');
+        }
+
+        // APLICAR FORMATO CONDICIONAL inmediatamente
+        Sherpas.GuideBook.applyCF(sh);
+
+      } catch(syncError) {
+        console.error('Error en sincronización con MASTER:', syncError);
+        ss.toast('⚠️ Error sincronizando con MASTER: ' + syncError.message, 'Error Sincronización', 10);
+      }
+
+    }catch(err){ 
+      console.error('onEdit GUIDE error crítico:', err); 
+      if(range && oldVal !== undefined) {
+        range.setValue(oldVal || '');
+      }
+    }
+  }
+
+  /**
+   * Encuentra columnas de guía en MASTER
+   */
+  function _findGuideBlockCols(sheet, codigo){
+    var lastCol = sheet.getLastColumn();
+    var top = sheet.getRange(1,1,1,lastCol).getDisplayValues()[0].map(function(s){ return String(s||'').toUpperCase(); });
+    var row2= sheet.getRange(2,1,1,lastCol).getDisplayValues()[0].map(function(s){ return String(s||'').toUpperCase(); });
+    var codeUp = codigo.toUpperCase();
+    for(var c2=1;c2<=lastCol;c2++){
+      var t = top[c2-1];
+      if(t.startsWith(codeUp+' ') || t.startsWith(codeUp+'—') || t===codeUp){
+        var isM=(row2[c2-1]==='MAÑANA'||row2[c2-1]==='M'), isT=(row2[c2]==='TARDE'||row2[c2]==='T');
+        if(isM && isT) return {colM:c2, colT:c2+1};
+      }
+    }
+    return {colM:0,colT:0};
   }
 
   function cronReconcile(){ Sherpas.UseCases.CronReconcileUC(); }
@@ -257,9 +329,10 @@ function validateAndCorrectContent(sheet) {
       
       // Verificar si el valor es válido
       var isValid = Sherpas.CFG.GUIDE_DV.includes(value) || 
-                   value.startsWith('ASIGNADO');
+                   value.startsWith('ASIGNADO') ||
+                   value === '';
       
-      if (!isValid && value !== '') {
+      if (!isValid) {
         // Valor inválido detectado
         invalidValues.push({a1: a1, value: value});
         
@@ -276,16 +349,12 @@ function validateAndCorrectContent(sheet) {
     
     // Mostrar advertencia si se hicieron correcciones
     if (correctionsMade > 0) {
-      var warning = 'Se corrigieron ' + correctionsMade + ' valores no válidos:\n';
-      invalidValues.slice(0, 3).forEach(function(inv) {
-        warning += '• ' + inv.a1 + ': "' + inv.value + '" → valor correcto\n';
-      });
-      if (invalidValues.length > 3) {
-        warning += '• ... y ' + (invalidValues.length - 3) + ' más';
-      }
-      
+      var warning = 'Se corrigieron ' + correctionsMade + ' valores no válidos';
       showWarning('Contenido Corregido', warning);
       console.log('Valores corregidos en ' + sheet.getName() + ':', invalidValues);
+      
+      // Reaplicar formato condicional después de correcciones
+      Sherpas.GuideBook.applyCF(sheet);
     }
     
   } catch(error) {
@@ -304,28 +373,12 @@ function restoreDataValidations(sheet) {
     var meta = Sherpas.Util.monthMeta(parsed.yyyy, parsed.mm);
     var mtA1List = Sherpas.Util.monthMT_A1_FromMeta(meta, 2);
     
-    // Crear regla de validación correcta
-    var rule = Sherpas.DVManager.buildListRule(Sherpas.CFG.GUIDE_DV);
+    // Aplicar protecciones completas
+    Sherpas.GuideBook.applyDV(sheet);
+    Sherpas.GuideBook.applyCF(sheet);
+    Sherpas.GuideBook.protectEditableMT(sheet);
     
-    var restoredCount = 0;
-    
-    // Verificar cada celda M/T
-    mtA1List.forEach(function(a1) {
-      var range = sheet.getRange(a1);
-      var currentRule = range.getDataValidation();
-      
-      // Si no hay regla o la regla es incorrecta, restaurar
-      if (!currentRule) {
-        range.setDataValidation(rule);
-        restoredCount++;
-      }
-    });
-    
-    if (restoredCount > 0) {
-      showWarning('Desplegables Restaurados', 
-        'Se restauraron ' + restoredCount + ' desplegables que habían sido alterados.');
-      console.log('Restauradas ' + restoredCount + ' validaciones en ' + sheet.getName());
-    }
+    console.log('Validaciones restauradas en ' + sheet.getName());
     
   } catch(error) {
     console.error('Error restaurando validaciones:', error);
@@ -348,68 +401,6 @@ function showWarning(title, message) {
   } catch(e) {
     // Si no hay UI (ejecución automática), solo log
     console.log('Advertencia:', title, '-', message);
-  }
-}
-
-/**
- * FUNCIÓN ADICIONAL: Reparación completa de un calendario específico
- */
-function repairGuideCalendarComplete(guideCode) {
-  try {
-    var reg = Sherpas.RegistryRepo.resolve(guideCode);
-    if (!reg) {
-      console.error('Guía no encontrado:', guideCode);
-      return false;
-    }
-    
-    var ss = SpreadsheetApp.openById(reg.fileId);
-    var repaired = 0;
-    
-    ss.getSheets().forEach(function(sheet) {
-      if (Sherpas.CFG.GUIDE_MONTH_NAME.test(sheet.getName())) {
-        // Reparar estructura
-        Sherpas.GuideBook.normalize(sheet);
-        
-        // Reparar contenido
-        validateAndCorrectContent(sheet);
-        
-        // Reparar validaciones
-        restoreDataValidations(sheet);
-        
-        // Reparar formato condicional
-        Sherpas.GuideBook.applyCF(sheet);
-        
-        // Reparar protecciones
-        Sherpas.GuideBook.protectEditableMT(sheet);
-        
-        repaired++;
-      }
-    });
-    
-    console.log('Calendario ' + guideCode + ' reparado completamente: ' + repaired + ' pestañas');
-    return true;
-    
-  } catch(error) {
-    console.error('Error reparando calendario:', guideCode, error);
-    return false;
-  }
-}
-
-/**
- * Función de debug para verificar triggers
- */
-function debugTriggers() {
-  try {
-    if (typeof Sherpas !== 'undefined' && Sherpas.TriggerSvc && Sherpas.TriggerSvc.countActiveTriggers) {
-      return Sherpas.TriggerSvc.countActiveTriggers();
-    } else {
-      var triggers = ScriptApp.getProjectTriggers();
-      console.log('Total triggers activos:', triggers.length);
-      return { total: triggers.length };
-    }
-  } catch(error) {
-    console.error('Error en debugTriggers:', error);
-    return { error: error.message };
   }
 }
 

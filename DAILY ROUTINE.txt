@@ -1,0 +1,52 @@
+DAILY WORKFLOW — Pull from Google Apps Script (Workspace) to GitHub
+Repo local: C:\Users\DEM_FX\CALENDARS_V2\SHERPAS_TEST\MASTER_TEST_V2
+
+1) Ir a la carpeta del repo
+cd "C:\Users\DEM_FX\CALENDARS_V2\SHERPAS_TEST\MASTER_TEST_V2"
+
+2) Traer cambios del editor de Apps Script
+clasp pull --force
+
+3) Ver estado (opcional)
+git status
+
+4) Añadir cambios
+git add .
+
+5) Commit con mensaje claro
+git commit -m "sync: cambios desde Workspace (GAS)"
+
+6) Enviar a GitHub
+git push
+
+
+RESOLUCIÓN RÁPIDA DE CHOQUES
+- Si GitHub tiene cambios nuevos:
+git pull --rebase origin main
+git add .
+git commit -m "merge: integra remoto tras pull de GAS"
+git push
+
+- Si aparecen archivos duplicados fuera de src/, mantener src/ como fuente única y borrar duplicados:
+# ejemplo
+Remove-Item @('01_config.js','02_utilidades.js','03_hojas.js','04_integraciones.js','05_registro.gs.js','06_master.js','07_guia.js','08_casos_uso.js','09_menu.js','10_triggers.js','appsscript.json') -Force
+
+- Verificar configuración de clasp (una vez)
+type .clasp.json
+# Debe ser:
+# { "scriptId":"1K_D4n_chuMwRJg_R0ephbyT9ueUbVkG05xAQ-LBd_1v5PB9OYgUGg1OX","rootDir":"./src" }
+
+
+AJUSTES (una vez)
+- Normalizar finales de línea en Windows (evita avisos CRLF)
+git config core.autocrlf true
+git add --renormalize .
+git commit -m "chore: normaliza EOL"
+git push
+
+- Ignorar basura
+ni .gitignore -Value "node_modules/`n.DS_Store`nThumbs.db`n" -Force
+ni .claspignore -Value "**/.git/**`n**/node_modules/**`n" -Force
+git add .gitignore .claspignore
+git commit -m "chore: ignores"
+git push

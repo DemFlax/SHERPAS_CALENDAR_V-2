@@ -30,7 +30,17 @@ Sherpas.MasterBook = (function(){
     var m = ym.match(Sherpas.CFG.MASTER_MONTH_NAME); if(!m) return null;
     var mm = parseInt(m[1],10), yyyy = parseInt(m[2],10);
     var sh = ss.getSheetByName(ym); if(sh) return sh;
-    sh = ss.insertSheet(ym);
+    
+    // CORRECCIÓN: Insertar pestañas en posición correcta (orden cronológico)
+    var existingSheets = ss.getSheets();
+    var insertPosition = _calculateSheetPosition(existingSheets, mm, yyyy);
+    
+    if(insertPosition >= 0) {
+      sh = ss.insertSheet(ym, insertPosition);
+    } else {
+      sh = ss.insertSheet(ym);
+    }
+    
     sh.getRange(1,1).setValue('FECHA');
     sh.setFrozenRows(2);
 
@@ -47,19 +57,92 @@ Sherpas.MasterBook = (function(){
     return sh;
   }
 
+  /**
+   * NUEVA: Calcula posición correcta para insertar pestaña mensual
+   */
+  function _calculateSheetPosition(existingSheets, targetMonth, targetYear) {
+    var monthSheets = [];
+    
+    // Extraer hojas mensuales existentes
+    existingSheets.forEach(function(sheet, index) {
+      var match = sheet.getName().match(Sherpas.CFG.MASTER_MONTH_NAME);
+      if(match) {
+        var mm = parseInt(match[1], 10);
+        var yyyy = parseInt(match[2], 10);
+        monthSheets.push({
+          index: index,
+          month: mm,
+          year: yyyy,
+          name: sheet.getName()
+        });
+      }
+    });
+    
+    // Ordenar por año y mes
+    monthSheets.sort(function(a, b) {
+      if(a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
+    
+    // Encontrar posición de inserción
+    for(var i = 0; i < monthSheets.length; i++) {
+      var sheet = monthSheets[i];
+      if(targetYear < sheet.year || (targetYear === sheet.year && targetMonth < sheet.month)) {
+        return sheet.index;
+      }
+    }
+    
+    // Si no se encuentra, insertar al final de las hojas mensuales
+    if(monthSheets.length > 0) {
+      return monthSheets[monthSheets.length - 1].index + 1;
+    }
+    
+    return -1; // Insertar al final
+  }
+
   /* ======== columnas por guía ======== */
   function ensureGuideColumns(codigo, nombre){
     var ss = _open();
     _listMonthTabs(ss).forEach(function(ms){
       var info = _findGuideBlockCols(ms, codigo);
       if(info.colM && info.colT) return;
-      var lastCol = Math.max(1, ms.getLastColumn());
-      ms.insertColumnsAfter(lastCol, 2);
-      var start = lastCol+1;
+      
+      // CORRECCIÓN: Encontrar verdadera última columna con contenido de guía
+      var lastGuideCol = _findLastGuideColumn(ms);
+      var insertAfter = Math.max(1, lastGuideCol); // Mínimo columna 1 (FECHA)
+      
+      ms.insertColumnsAfter(insertAfter, 2);
+      var start = insertAfter + 1;
       ms.getRange(2,start,1,2).setValues([['MAÑANA','TARDE']]);
       var top = ms.getRange(1,start,1,2); top.mergeAcross(); top.setValue(codigo+' — '+nombre);
       _applyDVandCF_ForCols(ms, start, start+1);
     });
+  }
+
+  /**
+   * NUEVA: Encuentra la verdadera última columna con contenido de guía
+   */
+  function _findLastGuideColumn(sheet) {
+    var maxCol = sheet.getMaxColumns();
+    var header1 = sheet.getRange(1, 1, 1, maxCol).getDisplayValues()[0];
+    var header2 = sheet.getRange(2, 1, 1, maxCol).getDisplayValues()[0];
+    
+    var lastGuideCol = 1; // Empezar después de FECHA
+    
+    // Buscar hacia atrás desde la última columna
+    for(var col = maxCol; col >= 1; col--) {
+      var h1 = String(header1[col-1] || '').trim();
+      var h2M = String(header2[col-1] || '').toUpperCase().trim();
+      var h2T = String(header2[col] || '').toUpperCase().trim();
+      
+      // Si encontramos un bloque de guía válido (código en h1, MAÑANA/TARDE en h2)
+      if(h1.match(/^G\d{2}\s*—/) && h2M === 'MAÑANA' && h2T === 'TARDE') {
+        lastGuideCol = col + 1; // +1 porque TARDE está en la siguiente columna
+        break;
+      }
+    }
+    
+    return lastGuideCol;
   }
 
   function _applyDVandCF_ForCols(sheet, colM, colT){

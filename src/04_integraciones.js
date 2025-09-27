@@ -52,12 +52,166 @@ Sherpas.MailSvc = (function(){
   'use strict';
   function send(to, subject, html){
     try{
-      if(!to) return;
-      if(MailApp.getRemainingDailyQuota() <= 0) return;
-      MailApp.sendEmail({to:to, subject:subject, htmlBody:html, name:'Spain Food Sherpas'});
-    }catch(e){ console.error('MailSvc.send', e); }
+      if(!to) {
+        console.warn('MailSvc: No se especificó destinatario');
+        return false;
+      }
+      if(MailApp.getRemainingDailyQuota() <= 0) {
+        console.warn('MailSvc: Quota de email agotada');
+        return false;
+      }
+      MailApp.sendEmail({
+        to: to, 
+        subject: subject, 
+        htmlBody: html, 
+        name: 'Spain Food Sherpas'
+      });
+      console.log('Email enviado a:', to);
+      return true;
+    }catch(e){ 
+      console.error('MailSvc.send error:', e); 
+      return false;
+    }
   }
   return { send:send };
+})();
+
+/** NUEVO: Servicio de Templates de Email */
+Sherpas.EmailTemplates = (function(){
+  'use strict';
+
+  /** Configuración base de emails */
+  var EMAIL_CONFIG = {
+    FROM_NAME: 'Spain Food Sherpas',
+    BRAND_COLOR: '#1a73e8',
+    SUCCESS_COLOR: '#c6efce',
+    WARNING_COLOR: '#fff3cd', 
+    ERROR_COLOR: '#ffcccc',
+    TEXT_COLOR: '#333333',
+    FOOTER_COLOR: '#666666'
+  };
+
+  /** Template base HTML */
+  function _buildBaseTemplate(headerText, content) {
+    return `
+      <div style="max-width:600px; margin:0 auto; font-family:Arial, sans-serif; color:${EMAIL_CONFIG.TEXT_COLOR};">
+        <div style="background:${EMAIL_CONFIG.BRAND_COLOR}; color:white; padding:20px; text-align:center; border-radius:8px 8px 0 0;">
+          <h1 style="margin:0; font-size:24px;">🍽️ Spain Food Sherpas</h1>
+          <p style="margin:8px 0 0 0; opacity:0.9;">${headerText}</p>
+        </div>
+        <div style="background:#f8f9fa; padding:20px; margin:0;">
+          ${content}
+        </div>
+        <div style="background:#f1f3f4; padding:15px; text-align:center; font-size:12px; color:${EMAIL_CONFIG.FOOTER_COLOR}; border-radius:0 0 8px 8px;">
+          <p style="margin:0;">Este email fue generado automáticamente por el Sistema de Gestión de Tours</p>
+          <p style="margin:5px 0 0 0;">© 2025 Spain Food Sherpas - Madrid</p>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Template de bienvenida para nuevo guía
+   */
+  function buildWelcomeTemplate(nombreGuia, codigoGuia, enlaceCalendario) {
+    var content = `
+      <div style="text-align:center; margin-bottom:20px;">
+        <h2 style="color:${EMAIL_CONFIG.BRAND_COLOR}; margin:0 0 10px 0;">¡Bienvenido al equipo!</h2>
+        <p style="font-size:16px; margin:0;">Tu calendario personal está listo para usar</p>
+      </div>
+      
+      <div style="background:white; padding:20px; border-radius:6px; margin:20px 0;">
+        <div style="margin-bottom:15px;">
+          <h3 style="margin:0 0 5px 0; color:${EMAIL_CONFIG.TEXT_COLOR};">👤 ${nombreGuia}</h3>
+          <p style="margin:0; color:${EMAIL_CONFIG.FOOTER_COLOR}; font-size:14px;">Código de guía: <strong>${codigoGuia}</strong></p>
+        </div>
+        
+        <div style="background:${EMAIL_CONFIG.WARNING_COLOR}; padding:15px; border-radius:4px; margin:15px 0;">
+          <p style="margin:0 0 10px 0; font-weight:bold;">📅 Accede a tu calendario:</p>
+          <a href="${enlaceCalendario}" 
+             style="display:inline-block; background:${EMAIL_CONFIG.BRAND_COLOR}; color:white; padding:10px 20px; text-decoration:none; border-radius:4px; font-weight:bold;">
+            🚀 Abrir Mi Calendario
+          </a>
+        </div>
+      </div>
+
+      <div style="background:white; padding:20px; border-radius:6px;">
+        <h3 style="color:${EMAIL_CONFIG.BRAND_COLOR}; margin:0 0 15px 0;">📋 Instrucciones importantes:</h3>
+        <ul style="margin:0; padding-left:20px; line-height:1.6;">
+          <li>Marca <strong>"NO DISPONIBLE"</strong> en turnos que no puedes trabajar</li>
+          <li>Los turnos asignados aparecerán en <span style="background:${EMAIL_CONFIG.SUCCESS_COLOR}; padding:2px 4px; border-radius:3px;">verde</span></li>
+          <li><strong>No modifiques</strong> nada más en el calendario</li>
+          <li>Las asignaciones las gestiona el manager desde el sistema central</li>
+        </ul>
+      </div>
+
+      <div style="background:white; padding:15px; border-radius:6px; margin-top:20px; text-align:center;">
+        <p style="margin:0; color:${EMAIL_CONFIG.FOOTER_COLOR}; font-size:14px;">
+          ¿Problemas con el calendario? Contacta con el manager
+        </p>
+      </div>
+    `;
+
+    return _buildBaseTemplate('Sistema de Gestión de Tours', content);
+  }
+
+  /**
+   * Envía email de bienvenida a nuevo guía
+   */
+  function sendWelcome(nombreGuia, codigoGuia, email, enlaceCalendario) {
+    try {
+      var subject = `🎉 Tu calendario está listo - ${nombreGuia} (${codigoGuia})`;
+      var html = buildWelcomeTemplate(nombreGuia, codigoGuia, enlaceCalendario);
+      
+      var success = Sherpas.MailSvc.send(email, subject, html);
+      
+      if(success) {
+        console.log(`Email de bienvenida enviado a ${nombreGuia} (${email})`);
+        return true;
+      } else {
+        console.warn(`Error enviando email de bienvenida a ${nombreGuia}`);
+        return false;
+      }
+    } catch(e) {
+      console.error('Error en sendWelcome:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Template para notificación de asignación
+   */
+  function sendAssignment(nombreGuia, codigoGuia, email, fecha, turno, enlaceCalendario) {
+    var content = `
+      <div style="text-align:center; margin-bottom:20px;">
+        <h2 style="color:${EMAIL_CONFIG.BRAND_COLOR}; margin:0 0 10px 0;">📅 Nueva Asignación</h2>
+        <p style="font-size:16px; margin:0;">Tienes un turno asignado</p>
+      </div>
+      
+      <div style="background:white; padding:20px; border-radius:6px; margin:20px 0;">
+        <h3 style="color:${EMAIL_CONFIG.TEXT_COLOR}; margin:0 0 15px 0;">Detalles del turno:</h3>
+        <p style="margin:0 0 10px 0;"><strong>Guía:</strong> ${nombreGuia} (${codigoGuia})</p>
+        <p style="margin:0 0 10px 0;"><strong>Fecha:</strong> ${fecha}</p>
+        <p style="margin:0 0 20px 0;"><strong>Turno:</strong> ${turno}</p>
+        
+        <a href="${enlaceCalendario}" 
+           style="display:inline-block; background:${EMAIL_CONFIG.BRAND_COLOR}; color:white; padding:10px 20px; text-decoration:none; border-radius:4px; font-weight:bold;">
+          📋 Ver Calendario
+        </a>
+      </div>
+    `;
+
+    var subject = `📅 Turno asignado: ${fecha} - ${turno}`;
+    var html = _buildBaseTemplate('Asignación de Turno', content);
+    
+    return Sherpas.MailSvc.send(email, subject, html);
+  }
+
+  return {
+    buildWelcomeTemplate: buildWelcomeTemplate,
+    sendWelcome: sendWelcome,
+    sendAssignment: sendAssignment
+  };
 })();
 
 /** Servicio de triggers instalables */
@@ -109,98 +263,79 @@ Sherpas.TriggerSvc = (function(){
     });
   }
 
-  /**
-   * NUEVA: Instalar UN SOLO trigger onChange global para MASTER
-   * que maneje TODOS los cambios de estructura en cualquier hoja
-   */
-  function ensureMasterOnChangeForAllGuides() {
-    var masterId = PropertiesService.getScriptProperties().getProperty(Sherpas.KEYS.MASTER_ID);
-    if(!masterId) return false;
-
-    // Verificar si ya existe trigger onChange para MASTER
-    var exists = ScriptApp.getProjectTriggers().some(function(t){
-      return t.getHandlerFunction() === 'globalOnChangeHandler' &&
-             t.getTriggerSource() === ScriptApp.TriggerSource.SPREADSHEETS &&
-             t.getTriggerSourceId && t.getTriggerSourceId() === masterId;
-    });
-
-    if(!exists) {
-      ScriptApp.newTrigger('globalOnChangeHandler')
-        .forSpreadsheet(masterId)
-        .onChange()
-        .create();
-      
-      console.log('Trigger onChange global instalado en MASTER');
-      return true;
-    }
-    
-    return false;
-  }
-
-  /**
-   * NUEVA: Instalar triggers onChange para cada calendario guía
-   * Estrategia alternativa si la global no funciona
-   */
+  /** NUEVO: Instalación masiva de triggers onChange para todas las hojas de guías */
   function ensureOnChangeForAllGuides() {
-    var guides = Sherpas.RegistryRepo.list();
-    var installed = 0;
-    
-    guides.forEach(function(guide) {
-      try {
-        var exists = ScriptApp.getProjectTriggers().some(function(t) {
-          return t.getHandlerFunction() === 'globalOnChangeHandler' &&
-                 t.getTriggerSource() === ScriptApp.TriggerSource.SPREADSHEETS &&
-                 t.getTriggerSourceId && t.getTriggerSourceId() === guide.fileId;
+    var count = 0;
+    try {
+      var guides = Sherpas.RegistryRepo.list();
+      guides.forEach(function(guide) {
+        var exists = ScriptApp.getProjectTriggers().some(function(t){
+          return t.getTriggerSource() === ScriptApp.TriggerSource.SPREADSHEETS &&
+                 t.getTriggerSourceId && t.getTriggerSourceId() === guide.fileId &&
+                 t.getEventType() === ScriptApp.EventType.ON_CHANGE;
         });
         
-        if (!exists) {
+        if(!exists) {
           ScriptApp.newTrigger('globalOnChangeHandler')
             .forSpreadsheet(guide.fileId)
             .onChange()
             .create();
-          installed++;
-          console.log('Trigger onChange instalado para:', guide.codigo);
+          count++;
         }
-        
-      } catch(error) {
-        console.error('Error instalando trigger onChange para ' + guide.codigo + ':', error);
+      });
+    } catch(e) {
+      console.error('Error instalando triggers onChange:', e);
+    }
+    return count;
+  }
+
+  /** NUEVO: Instalación de trigger onChange maestro desde MASTER */
+  function ensureMasterOnChangeForAllGuides() {
+    try {
+      var masterId = PropertiesService.getScriptProperties().getProperty(Sherpas.KEYS.MASTER_ID);
+      if(!masterId) return false;
+      
+      var exists = ScriptApp.getProjectTriggers().some(function(t){
+        return t.getTriggerSource() === ScriptApp.TriggerSource.SPREADSHEETS &&
+               t.getTriggerSourceId && t.getTriggerSourceId() === masterId &&
+               t.getEventType() === ScriptApp.EventType.ON_CHANGE;
+      });
+      
+      if(!exists) {
+        ScriptApp.newTrigger('masterOnChangeHandler')
+          .forSpreadsheet(masterId)
+          .onChange()
+          .create();
+        return true;
+      }
+      return false;
+    } catch(e) {
+      console.error('Error instalando trigger onChange maestro:', e);
+      return false;
+    }
+  }
+
+  /** NUEVO: Contar triggers activos por tipo */
+  function countActiveTriggers() {
+    var triggers = ScriptApp.getProjectTriggers();
+    var counts = {
+      onEdit: 0,
+      onChange: 0,
+      timeBased: 0,
+      total: triggers.length
+    };
+    
+    triggers.forEach(function(t) {
+      if(t.getTriggerSource() === ScriptApp.TriggerSource.SPREADSHEETS) {
+        if(t.getEventType() === ScriptApp.EventType.ON_EDIT) counts.onEdit++;
+        if(t.getEventType() === ScriptApp.EventType.ON_CHANGE) counts.onChange++;
+      } else if(t.getTriggerSource() === ScriptApp.TriggerSource.CLOCK) {
+        counts.timeBased++;
       }
     });
     
-    console.log('Triggers onChange instalados: ' + installed + '/' + guides.length);
-    return installed;
-  }
-
-  /**
-   * Función para contar triggers activos (debugging)
-   */
-  function countActiveTriggers() {
-    var triggers = ScriptApp.getProjectTriggers();
-    var count = {
-      total: triggers.length,
-      timeBased: 0,
-      onEdit: 0,
-      onChange: 0,
-      byFunction: {}
-    };
-
-    triggers.forEach(function(t) {
-      var fn = t.getHandlerFunction();
-      var source = t.getTriggerSource();
-      
-      if(!count.byFunction[fn]) count.byFunction[fn] = 0;
-      count.byFunction[fn]++;
-
-      if(source === ScriptApp.TriggerSource.CLOCK) count.timeBased++;
-      else if(source === ScriptApp.TriggerSource.SPREADSHEETS) {
-        var eventType = t.getEventType();
-        if(eventType === ScriptApp.EventType.ON_EDIT) count.onEdit++;
-        else if(eventType === ScriptApp.EventType.ON_CHANGE) count.onChange++;
-      }
-    });
-
-    console.log('Resumen de Triggers:', JSON.stringify(count, null, 2));
-    return count;
+    console.log('Triggers activos:', counts);
+    return counts;
   }
 
   return {
@@ -208,25 +343,8 @@ Sherpas.TriggerSvc = (function(){
     ensureOnEditForSpreadsheet: ensureOnEditForSpreadsheet,
     deleteOnEditForSpreadsheet: deleteOnEditForSpreadsheet,
     cleanOnEditOrphans: cleanOnEditOrphans,
-    ensureMasterOnChangeForAllGuides: ensureMasterOnChangeForAllGuides,
     ensureOnChangeForAllGuides: ensureOnChangeForAllGuides,
+    ensureMasterOnChangeForAllGuides: ensureMasterOnChangeForAllGuides,
     countActiveTriggers: countActiveTriggers
   };
 })();
-
-/**
- * Función temporal ejecutable para instalar triggers
- */
-function ejecutarInstalacionTriggers() {
-  // Estrategia: Intentar primero desde MASTER, luego individual si falla
-  var masterResult = Sherpas.TriggerSvc.ensureMasterOnChangeForAllGuides();
-  
-  if (!masterResult) {
-    console.log('Instalación desde MASTER falló, intentando individual...');
-    var individualResult = Sherpas.TriggerSvc.ensureOnChangeForAllGuides();
-    console.log('Triggers individuales instalados:', individualResult);
-  }
-  
-  // Mostrar resumen
-  Sherpas.TriggerSvc.countActiveTriggers();
-}
